@@ -99,6 +99,15 @@ def get_client():
 # ============================================================
 
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+
+if RESEND_API_KEY:
+    print(
+        "RESEND_API_KEY carregada:",
+        RESEND_API_KEY[:3] + "..." + RESEND_API_KEY[-4:]
+    )
+else:
+    print("RESEND_API_KEY NÃO carregada.")
+
 RESEND_FROM_EMAIL = os.getenv(
     "RESEND_FROM_EMAIL",
     "MINDSET PRO <onboarding@resend.dev>"
