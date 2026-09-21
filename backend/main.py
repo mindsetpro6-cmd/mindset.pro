@@ -1,6 +1,4 @@
 import os
-import ssl
-import smtplib
 import secrets
 import mimetypes
 from pathlib import Path
@@ -11,6 +9,13 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
 from google import genai
+
+from backend.database import (
+    criar_tabelas,
+    criar_utilizador,
+    obter_utilizador_por_email,
+    confirmar_email,
+)
 
 
 app = FastAPI(
@@ -35,8 +40,6 @@ app.add_middleware(
 BASE_DIR = Path(__file__).resolve().parent
 LOGO_PATH = BASE_DIR.parent / "assets" / "logo.jpeg"
 
-GMAIL_USER = os.getenv("GMAIL_USER")
-GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 
 VERIFY_BASE_URL = os.getenv(
     "VERIFY_BASE_URL",
@@ -60,6 +63,8 @@ class RegisterRequest(BaseModel):
     name: str
     email: EmailStr
     password: str
+    tipo: str = "ALUNO"
+    classe: str | None = None
 
 
 # ============================================================
@@ -67,6 +72,9 @@ class RegisterRequest(BaseModel):
 # ============================================================
 
 verification_tokens = {}
+
+# Inicializa a base central de utilizadores
+criar_tabelas()
 
 
 # ============================================================
@@ -90,11 +98,23 @@ def get_client():
 # EMAIL
 # ============================================================
 
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+RESEND_FROM_EMAIL = os.getenv(
+    "RESEND_FROM_EMAIL",
+    "MINDSET PRO <onboarding@resend.dev>"
+)
+
+
 def enviar_email_boas_vindas(nome, email, token):
 
-    if not GMAIL_USER or not GMAIL_APP_PASSWORD:
+    if not RESEND_API_KEY:
         raise RuntimeError(
-            "GMAIL_USER ou GMAIL_APP_PASSWORD não configurado."
+            "RESEND_API_KEY não configurada no servidor."
+        )
+
+    if not RESEND_FROM_EMAIL:
+        raise RuntimeError(
+            "RESEND_FROM_EMAIL não configurado."
         )
 
     if not LOGO_PATH.exists():
@@ -104,14 +124,7 @@ def enviar_email_boas_vindas(nome, email, token):
 
     confirm_url = f"{VERIFY_BASE_URL}?token={token}"
 
-    mensagem = EmailMessage()
-
-    mensagem["Subject"] = "Bem-vindo ao MINDSET PRO"
-    mensagem["From"] = f"MINDSET PRO <{GMAIL_USER}>"
-    mensagem["To"] = email
-
-    mensagem.set_content(
-        f"""
+    texto = f"""
 Olá, {nome}!
 
 É com grande satisfação que te damos as boas-vindas ao MINDSET PRO.
@@ -130,7 +143,6 @@ Com os melhores cumprimentos,
 Kensanny e a sua equipa
 MINDSET PRO
 """.strip()
-    )
 
     html = f"""
 <!DOCTYPE html>
@@ -303,41 +315,30 @@ MINDSET PRO
 </html>
 """
 
-    mensagem.add_alternative(html, subtype="html")
+    import base64
+    import resend
+
+    resend.api_key = RESEND_API_KEY
 
     with open(LOGO_PATH, "rb") as arquivo:
-        imagem = arquivo.read()
+        imagem = base64.b64encode(arquivo.read()).decode("utf-8")
 
-    tipo, _ = mimetypes.guess_type(str(LOGO_PATH))
+    resposta = resend.Emails.send({
+        "from": RESEND_FROM_EMAIL,
+        "to": [email],
+        "subject": "Bem-vindo ao MINDSET PRO",
+        "text": texto,
+        "html": html,
+        "attachments": [
+            {
+                "filename": "logo.jpeg",
+                "content": imagem,
+                "content_id": "logo_mindset"
+            }
+        ]
+    })
 
-    if not tipo:
-        tipo = "image/jpeg"
-
-    maintype, subtype = tipo.split("/", 1)
-
-    mensagem.get_payload()[1].add_related(
-        imagem,
-        maintype=maintype,
-        subtype=subtype,
-        cid="<logo_mindset>",
-        filename="logo.jpeg"
-    )
-
-    contexto = ssl.create_default_context()
-
-    with smtplib.SMTP_SSL(
-        "smtp.gmail.com",
-        465,
-        context=contexto,
-        timeout=30
-    ) as servidor:
-
-        servidor.login(
-            GMAIL_USER,
-            GMAIL_APP_PASSWORD
-        )
-
-        servidor.send_message(mensagem)
+    print("Email enviado pelo Resend:", resposta)
 
 
 # ============================================================
@@ -369,6 +370,31 @@ def register(request: RegisterRequest):
     nome = request.name.strip()
     email = str(request.email).strip().lower()
     password = request.password
+    tipo = request.tipo.strip().upper()
+    classe = request.classe.strip() if request.classe else None
+
+    tipos_permitidos = {
+        "ALUNO",
+        "ALUNO DA COMISSÃO"
+    }
+
+    if tipo not in tipos_permitidos:
+        raise HTTPException(
+            status_code=400,
+            detail="Tipo de conta inválido."
+        )
+
+    if tipo == "ALUNO" and not classe:
+        raise HTTPException(
+            status_code=400,
+            detail="A classe é obrigatória."
+        )
+
+    if tipo == "ALUNO DA COMISSÃO" and not classe:
+        raise HTTPException(
+            status_code=400,
+            detail="A classe é obrigatória."
+        )
 
     if len(nome) < 2:
         raise HTTPException(
@@ -380,6 +406,27 @@ def register(request: RegisterRequest):
         raise HTTPException(
             status_code=400,
             detail="A senha deve ter pelo menos 6 caracteres."
+        )
+
+    if obter_utilizador_por_email(email):
+        raise HTTPException(
+            status_code=400,
+            detail="Este email já está registado."
+        )
+
+    id_utilizador = criar_utilizador(
+        nome=nome,
+        email=email,
+        password=password,
+        tipo=tipo,
+        classe=classe,
+        email_confirmado=False
+    )
+
+    if not id_utilizador:
+        raise HTTPException(
+            status_code=400,
+            detail="Não foi possível criar a conta."
         )
 
     token = secrets.token_urlsafe(32)
@@ -401,6 +448,17 @@ def register(request: RegisterRequest):
     except Exception as erro:
 
         verification_tokens.pop(token, None)
+
+        # Remove a conta se o email não puder ser enviado.
+        from backend.database import conectar
+
+        conn = conectar()
+        conn.execute(
+            "DELETE FROM utilizadores WHERE id = ?",
+            (id_utilizador,)
+        )
+        conn.commit()
+        conn.close()
 
         print(
             "ERRO EMAIL:",
@@ -446,6 +504,8 @@ def verify_email(token: str):
         )
 
     verification_tokens.pop(token, None)
+
+    confirmar_email(dados["email"])
 
     return {
         "status": "confirmed",
