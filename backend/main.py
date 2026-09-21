@@ -103,7 +103,8 @@ RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 if RESEND_API_KEY:
     print(
         "RESEND_API_KEY carregada:",
-        RESEND_API_KEY[:3] + "..." + RESEND_API_KEY[-4:]
+        RESEND_API_KEY[:3] + "..." + RESEND_API_KEY[-4:],
+        "| tamanho:", len(RESEND_API_KEY)
     )
 else:
     print("RESEND_API_KEY NÃO carregada.")
