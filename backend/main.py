@@ -374,6 +374,32 @@ def health():
 # REGISTO
 # ============================================================
 
+@app.get("/debug/resend")
+def debug_resend():
+    try:
+        import resend
+
+        if not RESEND_API_KEY:
+            return {"status": "inválida", "motivo": "RESEND_API_KEY ausente"}
+
+        resend.api_key = RESEND_API_KEY
+
+        # Endpoint seguro: apenas verifica autenticação com o Resend.
+        resposta = resend.ApiKeys.list()
+
+        return {
+            "status": "válida",
+            "resend_respondeu": True
+        }
+
+    except Exception as erro:
+        return {
+            "status": "inválida",
+            "resend_respondeu": False,
+            "tipo_erro": type(erro).__name__
+        }
+
+
 @app.post("/register")
 def register(request: RegisterRequest):
 
