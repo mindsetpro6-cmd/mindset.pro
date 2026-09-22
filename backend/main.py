@@ -374,6 +374,42 @@ def health():
 # REGISTO
 # ============================================================
 
+@app.get("/debug/resend-email")
+def debug_resend_email():
+    try:
+        import resend
+
+        if not RESEND_API_KEY:
+            return {"status": "erro", "motivo": "RESEND_API_KEY ausente"}
+
+        resend.api_key = RESEND_API_KEY
+
+        resposta = resend.Emails.send({
+            "from": RESEND_FROM_EMAIL,
+            "to": ["denthedesign4@gmail.com"],
+            "subject": "Teste Resend — MINDSET PRO",
+            "text": "Este é um email de teste do MINDSET PRO.",
+            "html": "<h2>Teste Resend — MINDSET PRO</h2><p>Se recebeste este email, o envio pelo Resend está a funcionar.</p>"
+        })
+
+        print("TESTE RESEND:", resposta)
+
+        return {
+            "status": "enviado",
+            "resend_respondeu": True
+        }
+
+    except Exception as erro:
+        print("ERRO TESTE RESEND:", repr(erro))
+
+        return {
+            "status": "erro",
+            "resend_respondeu": False,
+            "tipo_erro": type(erro).__name__,
+            "mensagem": str(erro)[:300]
+        }
+
+
 @app.get("/debug/resend")
 def debug_resend():
     try:
