@@ -19,6 +19,9 @@ from backend.database import (
 
 from backend.supabase_client import obter_cliente_supabase
 
+# NOVO: rotas da Biblioteca
+from backend.biblioteca_routes import router as biblioteca_router
+
 
 # ============================================================
 # MINDSET PRO API
@@ -30,6 +33,7 @@ app = FastAPI(
     version="1.3.0",
 )
 
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -40,10 +44,18 @@ app.add_middleware(
 
 
 # ============================================================
+# REGISTAR ROTAS DA BIBLIOTECA
+# ============================================================
+
+app.include_router(biblioteca_router)
+
+
+# ============================================================
 # CONFIGURAÇÕES
 # ============================================================
 
 BASE_DIR = Path(__file__).resolve().parent
+
 LOGO_PATH = BASE_DIR.parent / "assets" / "logo.jpeg"
 
 VERIFY_BASE_URL = os.getenv(
@@ -108,6 +120,7 @@ def get_client():
 # ============================================================
 
 def enviar_email_boas_vindas(nome, email, token):
+
     if not RESEND_API_KEY:
         raise RuntimeError(
             "RESEND_API_KEY não configurada."
@@ -123,6 +136,7 @@ def enviar_email_boas_vindas(nome, email, token):
     resend.api_key = RESEND_API_KEY
 
     confirm_url = f"{VERIFY_BASE_URL}?token={token}"
+
     nome_html = escape(nome)
 
     texto = f"""
@@ -146,6 +160,7 @@ MINDSET PRO
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 </head>
+
 <body style="
     margin:0;
     padding:25px 10px;
@@ -153,26 +168,36 @@ MINDSET PRO
     color:#ffffff;
     font-family:Arial,sans-serif;
 ">
+
 <table width="100%" cellpadding="0" cellspacing="0">
 <tr>
 <td align="center">
+
 <table width="100%" cellpadding="0" cellspacing="0"
 style="
     max-width:600px;
     background:#101D2E;
     border-radius:18px;
 ">
+
 <tr>
 <td align="center" style="padding:30px 20px;">
+
 <h1 style="color:#ffffff;">MINDSET PRO</h1>
+
 <p style="color:#A8B3C2;">
 Aprender sem limites. Evoluir sem fronteiras.
 </p>
+
 </td>
 </tr>
+
 <tr>
 <td style="padding:25px 30px 35px;">
-<h2 style="color:#20D67A;">Bem-vindo ao MINDSET PRO!</h2>
+
+<h2 style="color:#20D67A;">
+Bem-vindo ao MINDSET PRO!
+</h2>
 
 <p>Olá, <strong>{nome_html}</strong>.</p>
 
@@ -181,9 +206,12 @@ A tua conta foi criada. O MINDSET PRO ajuda-te a estudar,
 compreender matérias, praticar exercícios e esclarecer dúvidas.
 </p>
 
-<p>Confirma o teu endereço de email através do botão abaixo:</p>
+<p>
+Confirma o teu endereço de email através do botão abaixo:
+</p>
 
 <p style="text-align:center;margin:30px 0;">
+
 <a href="{confirm_url}"
 style="
     display:inline-block;
@@ -196,6 +224,7 @@ style="
 ">
 CONFIRMAR A MINHA CONTA
 </a>
+
 </p>
 
 <p style="color:#A8B3C2;font-size:13px;">
@@ -207,12 +236,15 @@ Com os melhores cumprimentos,<br>
 <strong>Kensanny e a sua equipa</strong><br>
 MINDSET PRO
 </p>
+
 </td>
 </tr>
+
 </table>
 </td>
 </tr>
 </table>
+
 </body>
 </html>
 """
@@ -268,10 +300,10 @@ def health():
 
 @app.get("/health/supabase")
 def health_supabase():
+
     try:
         cliente = obter_cliente_supabase()
 
-        # Faz um pedido real ao Storage do Supabase.
         buckets = cliente.storage.list_buckets()
 
         return {
@@ -282,6 +314,7 @@ def health_supabase():
         }
 
     except Exception as erro:
+
         print(
             "ERRO SUPABASE:",
             type(erro).__name__,
@@ -300,6 +333,7 @@ def health_supabase():
 
 @app.get("/debug/resend")
 def debug_resend():
+
     try:
         import resend
 
@@ -309,6 +343,7 @@ def debug_resend():
             )
 
         resend.api_key = RESEND_API_KEY
+
         resend.ApiKeys.list()
 
         return {
@@ -317,6 +352,7 @@ def debug_resend():
         }
 
     except Exception as erro:
+
         print(
             "ERRO RESEND:",
             type(erro).__name__,
@@ -335,11 +371,17 @@ def debug_resend():
 
 @app.post("/register")
 def register(request: RegisterRequest):
+
     nome = request.name.strip()
     email = str(request.email).strip().lower()
     password = request.password
     tipo = request.tipo.strip().upper()
-    classe = request.classe.strip() if request.classe else None
+
+    classe = (
+        request.classe.strip()
+        if request.classe
+        else None
+    )
 
     tipos_permitidos = {
         "ALUNO",
@@ -407,9 +449,9 @@ def register(request: RegisterRequest):
         )
 
     except Exception as erro:
+
         verification_tokens.pop(token, None)
 
-        # Reverte o registo se o envio falhar.
         from backend.database import conectar
 
         conn = conectar()
@@ -419,7 +461,9 @@ def register(request: RegisterRequest):
                 "DELETE FROM utilizadores WHERE id = ?",
                 (id_utilizador,),
             )
+
             conn.commit()
+
         finally:
             conn.close()
 
@@ -447,6 +491,7 @@ def register(request: RegisterRequest):
 
 @app.get("/verify-email")
 def verify_email(token: str):
+
     dados = verification_tokens.get(token)
 
     if not dados:
@@ -461,6 +506,7 @@ def verify_email(token: str):
         datetime.now(timezone.utc) - criado
         > timedelta(hours=24)
     ):
+
         verification_tokens.pop(token, None)
 
         raise HTTPException(
@@ -469,6 +515,7 @@ def verify_email(token: str):
         )
 
     confirmar_email(dados["email"])
+
     verification_tokens.pop(token, None)
 
     return {
@@ -484,6 +531,7 @@ def verify_email(token: str):
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
+
     mensagem = request.message.strip()
 
     if not mensagem:
@@ -524,6 +572,7 @@ def chat(request: ChatRequest):
         )
 
     except Exception as erro:
+
         print(
             "ERRO GEMINI:",
             type(erro).__name__,
