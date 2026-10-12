@@ -1,13 +1,13 @@
 import os
 import secrets
-import mimetypes
+import base64
 from pathlib import Path
-from email.message import EmailMessage
 from datetime import datetime, timedelta, timezone
+from html import escape
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from google import genai
 
 from backend.database import (
@@ -17,33 +17,46 @@ from backend.database import (
     confirmar_email,
 )
 
+from backend.supabase_client import obter_cliente_supabase
+
+
+# ============================================================
+# CONFIGURAÇÃO DA APLICAÇÃO
+# ============================================================
 
 app = FastAPI(
     title="MINDSET PRO API",
-    version="1.1.0"
+    description="Backend oficial do MINDSET PRO",
+    version="1.2.0",
 )
-
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
-    allow_methods=["POST", "GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
 
 # ============================================================
-# CONFIGURAÇÃO
+# CAMINHOS E CONFIGURAÇÕES
 # ============================================================
 
 BASE_DIR = Path(__file__).resolve().parent
-LOGO_PATH = BASE_DIR.parent / "assets" / "logo.jpeg"
 
+LOGO_PATH = BASE_DIR.parent / "assets" / "logo.jpeg"
 
 VERIFY_BASE_URL = os.getenv(
     "VERIFY_BASE_URL",
-    "https://mindset-pro-api.onrender.com/verify-email"
+    "https://mindset-pro.onrender.com/verify-email",
+)
+
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+
+RESEND_FROM_EMAIL = os.getenv(
+    "RESEND_FROM_EMAIL",
+    "MINDSET PRO <onboarding@resend.dev>",
 )
 
 
@@ -52,7 +65,10 @@ VERIFY_BASE_URL = os.getenv(
 # ============================================================
 
 class ChatRequest(BaseModel):
-    message: str
+    message: str = Field(
+        min_length=1,
+        max_length=10000,
+    )
 
 
 class ChatResponse(BaseModel):
@@ -60,25 +76,26 @@ class ChatResponse(BaseModel):
 
 
 class RegisterRequest(BaseModel):
-    name: str
+    name: str = Field(min_length=2, max_length=100)
     email: EmailStr
-    password: str
+    password: str = Field(min_length=6, max_length=128)
     tipo: str = "ALUNO"
     classe: str | None = None
 
 
 # ============================================================
-# MEMÓRIA TEMPORÁRIA DE CONFIRMAÇÕES
+# TOKENS DE CONFIRMAÇÃO DE EMAIL
 # ============================================================
 
 verification_tokens = {}
 
-# Inicializa a base central de utilizadores
+
+# Inicializa a base de dados local existente.
 criar_tabelas()
 
 
 # ============================================================
-# GEMINI
+# GEMINI — MINDSET AI
 # ============================================================
 
 def get_client():
@@ -89,34 +106,14 @@ def get_client():
             "GEMINI_API_KEY não configurada no servidor."
         )
 
-    return genai.Client(
-        api_key=api_key
-    )
+    return genai.Client(api_key=api_key)
 
 
 # ============================================================
-# EMAIL
+# RESEND — ENVIO DE EMAILS
 # ============================================================
-
-RESEND_API_KEY = os.getenv("RESEND_API_KEY")
-
-if RESEND_API_KEY:
-    print(
-        "RESEND_API_KEY carregada:",
-        RESEND_API_KEY[:3] + "..." + RESEND_API_KEY[-4:],
-        "| tamanho:", len(RESEND_API_KEY)
-    )
-else:
-    print("RESEND_API_KEY NÃO carregada.")
-
-RESEND_FROM_EMAIL = os.getenv(
-    "RESEND_FROM_EMAIL",
-    "MINDSET PRO <onboarding@resend.dev>"
-)
-
 
 def enviar_email_boas_vindas(nome, email, token):
-
     if not RESEND_API_KEY:
         raise RuntimeError(
             "RESEND_API_KEY não configurada no servidor."
@@ -132,7 +129,13 @@ def enviar_email_boas_vindas(nome, email, token):
             f"Logo não encontrado: {LOGO_PATH}"
         )
 
+    import resend
+
+    resend.api_key = RESEND_API_KEY
+
     confirm_url = f"{VERIFY_BASE_URL}?token={token}"
+
+    nome_html = escape(nome)
 
     texto = f"""
 Olá, {nome}!
@@ -141,11 +144,9 @@ Olá, {nome}!
 
 A tua conta foi criada com sucesso.
 
-Para confirmar que este endereço de email te pertence, abre o seguinte endereço:
+Para confirmar o teu endereço de email, abre o seguinte endereço:
 
 {confirm_url}
-
-Depois da confirmação, poderás continuar a utilizar o MINDSET PRO normalmente.
 
 Aprender sem limites. Evoluir sem fronteiras.
 
@@ -167,9 +168,11 @@ MINDSET PRO
     padding:0;
     background:#07111F;
     font-family:Arial,Helvetica,sans-serif;
+    color:#ffffff;
 ">
 
-<table width="100%" cellpadding="0" cellspacing="0" style="padding:35px 15px;">
+<table width="100%" cellpadding="0" cellspacing="0"
+       style="padding:35px 15px;">
 <tr>
 <td align="center">
 
@@ -188,26 +191,13 @@ MINDSET PRO
 <img src="cid:logo_mindset"
      alt="MINDSET PRO"
      width="120"
-     style="
-     display:block;
-     width:120px;
-     height:auto;
-     border-radius:16px;
-     ">
+     style="display:block;width:120px;height:auto;border-radius:16px;">
 
-<h1 style="
-    margin:20px 0 5px;
-    font-size:28px;
-    color:#ffffff;
-">
+<h1 style="margin:20px 0 5px;font-size:28px;">
 MINDSET PRO
 </h1>
 
-<p style="
-    margin:0;
-    color:#A8B3C2;
-    font-size:14px;
-">
+<p style="margin:0;color:#A8B3C2;font-size:14px;">
 Aprender sem limites. Evoluir sem fronteiras.
 </p>
 
@@ -217,29 +207,22 @@ Aprender sem limites. Evoluir sem fronteiras.
 <tr>
 <td style="padding:25px 35px 35px;">
 
-<h2 style="
-    color:#20D67A;
-    font-size:22px;
-    margin-top:0;
-">
+<h2 style="color:#20D67A;font-size:22px;">
 Bem-vindo ao MINDSET PRO!
 </h2>
 
-<p style="font-size:16px; line-height:1.6;">
-Olá, <strong>{nome}</strong>,
+<p style="font-size:16px;line-height:1.6;">
+Olá, <strong>{nome_html}</strong>,
 </p>
 
-<p style="font-size:16px; line-height:1.6;">
-É com grande satisfação que te damos as boas-vindas ao
-<strong>MINDSET PRO</strong>, uma plataforma criada para apoiar
-estudantes na aprendizagem, na descoberta e na evolução.
+<p style="font-size:16px;line-height:1.6;">
+A tua conta foi criada com sucesso. O MINDSET PRO foi concebido
+para apoiar os estudantes na aprendizagem, na descoberta e na evolução.
 </p>
 
-<p style="font-size:16px; line-height:1.6;">
-A partir de agora, tens acesso ao
-<strong>MINDSET AI</strong>, o assistente inteligente do MINDSET PRO,
-preparado para ajudar-te a compreender matérias, esclarecer dúvidas,
-estudar, praticar e desenvolver os teus conhecimentos.
+<p style="font-size:16px;line-height:1.6;">
+Com o MINDSET AI, poderás esclarecer dúvidas, compreender matérias,
+praticar exercícios e desenvolver os teus conhecimentos.
 </p>
 
 <div style="
@@ -248,21 +231,17 @@ estudar, praticar e desenvolver os teus conhecimentos.
     background:#16263B;
     border-radius:12px;
 ">
-<p style="
-    margin:0;
-    font-size:16px;
-    line-height:1.5;
-">
-<strong>A tua conta foi criada com sucesso.</strong>
+<strong>A tua conta está quase pronta!</strong>
+<p style="margin-bottom:0;">
+Confirma o teu endereço de email para concluir o processo.
 </p>
 </div>
 
-<p style="font-size:16px; line-height:1.6;">
-Para confirmar que este endereço de email te pertence,
-utiliza o botão abaixo:
+<p style="font-size:16px;line-height:1.6;">
+Clica no botão abaixo para confirmar a tua conta:
 </p>
 
-<p style="text-align:center; margin:30px 0;">
+<p style="text-align:center;margin:30px 0;">
 
 <a href="{confirm_url}"
    style="
@@ -280,21 +259,8 @@ CONFIRMAR A MINHA CONTA
 
 </p>
 
-<p style="
-    color:#A8B3C2;
-    font-size:13px;
-    line-height:1.5;
-">
+<p style="color:#A8B3C2;font-size:13px;line-height:1.5;">
 Se não foste tu que criaste esta conta, podes ignorar esta mensagem.
-</p>
-
-<p style="
-    font-size:16px;
-    line-height:1.6;
-    margin-top:30px;
-">
-Estamos a construir uma plataforma para tornar a aprendizagem
-mais acessível, inteligente e dinâmica.
 </p>
 
 <p style="
@@ -306,7 +272,7 @@ mais acessível, inteligente e dinâmica.
 Aprender sem limites. Evoluir sem fronteiras.
 </p>
 
-<p style="font-size:15px; line-height:1.6;">
+<p style="font-size:15px;line-height:1.6;">
 Com os melhores cumprimentos,<br>
 <strong>Kensanny e a sua equipa</strong><br>
 MINDSET PRO
@@ -314,7 +280,6 @@ MINDSET PRO
 
 </td>
 </tr>
-
 </table>
 
 </td>
@@ -325,13 +290,10 @@ MINDSET PRO
 </html>
 """
 
-    import base64
-    import resend
-
-    resend.api_key = RESEND_API_KEY
-
     with open(LOGO_PATH, "rb") as arquivo:
-        imagem = base64.b64encode(arquivo.read()).decode("utf-8")
+        imagem = base64.b64encode(
+            arquivo.read()
+        ).decode("utf-8")
 
     resposta = resend.Emails.send({
         "from": RESEND_FROM_EMAIL,
@@ -343,72 +305,73 @@ MINDSET PRO
             {
                 "filename": "logo.jpeg",
                 "content": imagem,
-                "content_id": "logo_mindset"
+                "content_id": "logo_mindset",
             }
-        ]
+        ],
     })
 
     print("Email enviado pelo Resend:", resposta)
 
 
 # ============================================================
-# ROTAS BÁSICAS
+# ROTAS PRINCIPAIS
 # ============================================================
 
 @app.get("/")
 def root():
     return {
         "status": "online",
-        "service": "MINDSET PRO API"
+        "service": "MINDSET PRO API",
+        "version": app.version,
     }
 
 
 @app.get("/health")
 def health():
     return {
-        "status": "ok"
+        "status": "ok",
+        "service": "MINDSET PRO API",
     }
 
 
 # ============================================================
-# REGISTO
+# SUPABASE — TESTE DE LIGAÇÃO
 # ============================================================
 
-@app.get("/debug/resend-email")
-def debug_resend_email():
+@app.get("/health/supabase")
+def health_supabase():
     try:
-        import resend
+        cliente = obter_cliente_supabase()
 
-        if not RESEND_API_KEY:
-            return {"status": "erro", "motivo": "RESEND_API_KEY ausente"}
-
-        resend.api_key = RESEND_API_KEY
-
-        resposta = resend.Emails.send({
-            "from": RESEND_FROM_EMAIL,
-            "to": ["mindset.pro6@gmail.com"],
-            "subject": "Teste Resend — MINDSET PRO",
-            "text": "Este é um email de teste do MINDSET PRO.",
-            "html": "<h2>Teste Resend — MINDSET PRO</h2><p>Se recebeste este email, o envio pelo Resend está a funcionar.</p>"
-        })
-
-        print("TESTE RESEND:", resposta)
+        # Verifica a comunicação com o Storage.
+        buckets = cliente.storage.list_buckets()
 
         return {
-            "status": "enviado",
-            "resend_respondeu": True
+            "status": "ok",
+            "supabase": "conectado",
+            "storage": "acessível",
+            "buckets": len(buckets),
         }
 
     except Exception as erro:
-        print("ERRO TESTE RESEND:", repr(erro))
+        print(
+            "ERRO SUPABASE:",
+            type(erro).__name__,
+            str(erro)[:300],
+        )
 
-        return {
-            "status": "erro",
-            "resend_respondeu": False,
-            "tipo_erro": type(erro).__name__,
-            "mensagem": str(erro)[:300]
-        }
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Não foi possível verificar a ligação "
+                "ao Supabase. Consulta os logs do servidor."
+            ),
+        )
 
+
+# ============================================================
+# DIAGNÓSTICO DO RESEND
+# ============================================================
 
 @app.get("/debug/resend")
 def debug_resend():
@@ -416,29 +379,86 @@ def debug_resend():
         import resend
 
         if not RESEND_API_KEY:
-            return {"status": "inválida", "motivo": "RESEND_API_KEY ausente"}
+            return {
+                "status": "erro",
+                "motivo": "RESEND_API_KEY ausente",
+            }
 
         resend.api_key = RESEND_API_KEY
 
-        # Endpoint seguro: apenas verifica autenticação com o Resend.
-        resposta = resend.ApiKeys.list()
+        resend.ApiKeys.list()
 
         return {
-            "status": "válida",
-            "resend_respondeu": True
+            "status": "ok",
+            "resend_respondeu": True,
         }
 
     except Exception as erro:
+        print(
+            "ERRO RESEND:",
+            type(erro).__name__,
+            str(erro)[:300],
+        )
+
         return {
-            "status": "inválida",
+            "status": "erro",
             "resend_respondeu": False,
-            "tipo_erro": type(erro).__name__
+            "tipo_erro": type(erro).__name__,
         }
 
 
+@app.get("/debug/resend-email")
+def debug_resend_email():
+    try:
+        import resend
+
+        if not RESEND_API_KEY:
+            return {
+                "status": "erro",
+                "motivo": "RESEND_API_KEY ausente",
+            }
+
+        resend.api_key = RESEND_API_KEY
+
+        resposta = resend.Emails.send({
+            "from": RESEND_FROM_EMAIL,
+            "to": ["mindset.pro6@gmail.com"],
+            "subject": "Teste Resend — MINDSET PRO",
+            "text": (
+                "Este é um email de teste do MINDSET PRO."
+            ),
+            "html": (
+                "<h2>Teste Resend — MINDSET PRO</h2>"
+                "<p>O envio de email está a funcionar.</p>"
+            ),
+        })
+
+        print("TESTE RESEND:", resposta)
+
+        return {
+            "status": "enviado",
+            "resend_respondeu": True,
+        }
+
+    except Exception as erro:
+        print(
+            "ERRO TESTE RESEND:",
+            type(erro).__name__,
+            str(erro)[:300],
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Não foi possível enviar o email de teste.",
+        )
+
+
+# ============================================================
+# REGISTO DE UTILIZADORES
+# ============================================================
+
 @app.post("/register")
 def register(request: RegisterRequest):
-
     nome = request.name.strip()
     email = str(request.email).strip().lower()
     password = request.password
@@ -447,43 +467,37 @@ def register(request: RegisterRequest):
 
     tipos_permitidos = {
         "ALUNO",
-        "ALUNO DA COMISSÃO"
+        "ALUNO DA COMISSÃO",
     }
 
     if tipo not in tipos_permitidos:
         raise HTTPException(
             status_code=400,
-            detail="Tipo de conta inválido."
-        )
-
-    if tipo == "ALUNO" and not classe:
-        raise HTTPException(
-            status_code=400,
-            detail="A classe é obrigatória."
-        )
-
-    if tipo == "ALUNO DA COMISSÃO" and not classe:
-        raise HTTPException(
-            status_code=400,
-            detail="A classe é obrigatória."
+            detail="Tipo de conta inválido.",
         )
 
     if len(nome) < 2:
         raise HTTPException(
             status_code=400,
-            detail="Nome inválido."
+            detail="Nome inválido.",
+        )
+
+    if not classe:
+        raise HTTPException(
+            status_code=400,
+            detail="A classe é obrigatória.",
         )
 
     if len(password) < 6:
         raise HTTPException(
             status_code=400,
-            detail="A senha deve ter pelo menos 6 caracteres."
+            detail="A senha deve ter pelo menos 6 caracteres.",
         )
 
     if obter_utilizador_por_email(email):
         raise HTTPException(
             status_code=400,
-            detail="Este email já está registado."
+            detail="Este email já está registado.",
         )
 
     id_utilizador = criar_utilizador(
@@ -492,13 +506,13 @@ def register(request: RegisterRequest):
         password=password,
         tipo=tipo,
         classe=classe,
-        email_confirmado=False
+        email_confirmado=False,
     )
 
     if not id_utilizador:
         raise HTTPException(
             status_code=400,
-            detail="Não foi possível criar a conta."
+            detail="Não foi possível criar a conta.",
         )
 
     token = secrets.token_urlsafe(32)
@@ -506,46 +520,50 @@ def register(request: RegisterRequest):
     verification_tokens[token] = {
         "name": nome,
         "email": email,
-        "created_at": datetime.now(timezone.utc)
+        "created_at": datetime.now(timezone.utc),
     }
 
     try:
-
         enviar_email_boas_vindas(
             nome,
             email,
-            token
+            token,
         )
 
     except Exception as erro:
-
         verification_tokens.pop(token, None)
 
-        # Remove a conta se o email não puder ser enviado.
+        # Reverte o registo caso o envio do email falhe.
         from backend.database import conectar
 
         conn = conectar()
-        conn.execute(
-            "DELETE FROM utilizadores WHERE id = ?",
-            (id_utilizador,)
-        )
-        conn.commit()
-        conn.close()
+
+        try:
+            conn.execute(
+                "DELETE FROM utilizadores WHERE id = ?",
+                (id_utilizador,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
         print(
             "ERRO EMAIL:",
-            repr(erro)
+            type(erro).__name__,
+            str(erro)[:300],
         )
 
         raise HTTPException(
             status_code=500,
-            detail="Não foi possível enviar o email de confirmação."
+            detail=(
+                "Não foi possível enviar o email de confirmação."
+            ),
         )
 
     return {
         "status": "ok",
         "message": "Conta criada. Verifica o teu email.",
-        "email": email
+        "email": email,
     }
 
 
@@ -555,99 +573,98 @@ def register(request: RegisterRequest):
 
 @app.get("/verify-email")
 def verify_email(token: str):
-
     dados = verification_tokens.get(token)
 
     if not dados:
         raise HTTPException(
             status_code=400,
-            detail="Link de confirmação inválido ou expirado."
+            detail="Link de confirmação inválido ou expirado.",
         )
 
     criado = dados["created_at"]
 
-    if datetime.now(timezone.utc) - criado > timedelta(hours=24):
-
+    if (
+        datetime.now(timezone.utc) - criado
+        > timedelta(hours=24)
+    ):
         verification_tokens.pop(token, None)
 
         raise HTTPException(
             status_code=400,
-            detail="Link de confirmação expirado."
+            detail="Link de confirmação expirado.",
         )
 
-    verification_tokens.pop(token, None)
-
+    # Confirma primeiro na base de dados.
     confirmar_email(dados["email"])
+
+    verification_tokens.pop(token, None)
 
     return {
         "status": "confirmed",
         "message": "Email confirmado com sucesso.",
-        "email": dados["email"]
+        "email": dados["email"],
     }
 
 
 # ============================================================
-# GEMINI
+# MINDSET AI — GEMINI
 # ============================================================
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
-
     mensagem = request.message.strip()
 
     if not mensagem:
         raise HTTPException(
             status_code=400,
-            detail="Mensagem vazia."
-        )
-
-    if len(mensagem) > 10000:
-        raise HTTPException(
-            status_code=400,
-            detail="Mensagem demasiado longa."
+            detail="Mensagem vazia.",
         )
 
     try:
-
         client = get_client()
 
         response = client.models.generate_content(
-            model="gemini-3.7-flash",
+            model=os.getenv(
+                "GEMINI_MODEL",
+                "gemini-3.7-flash",
+            ),
             contents=(
-                "Tu és o MINDSET AI, assistente inteligente "
+                "Tu és o MINDSET AI, o assistente inteligente "
                 "do aplicativo MINDSET PRO. "
-                "Responde em português de forma clara, "
+                "Responde em português, de forma clara, "
                 "útil e natural. "
                 "Quando explicares assuntos escolares, "
-                "ensina passo a passo. "
+                "ensina passo a passo e apresenta exemplos. "
                 "Não inventes informações quando não tiveres "
-                "certeza.\n\n"
+                "certeza. "
+                "Ajuda o estudante a compreender a matéria, "
+                "em vez de apenas apresentar respostas.\n\n"
                 f"Utilizador: {mensagem}"
             ),
         )
 
         texto = getattr(response, "text", None)
 
-        if not texto:
+        if not texto or not texto.strip():
             raise RuntimeError(
                 "O Gemini não retornou texto."
             )
 
         return ChatResponse(
-            response=texto.strip()
+            response=texto.strip(),
         )
 
     except HTTPException:
         raise
 
     except Exception as erro:
-
         print(
             "ERRO GEMINI:",
-            repr(erro)
+            type(erro).__name__,
+            str(erro)[:300],
         )
 
         raise HTTPException(
             status_code=500,
-            detail="Erro ao processar a mensagem."
+            detail="Erro ao processar a mensagem.",
         )
