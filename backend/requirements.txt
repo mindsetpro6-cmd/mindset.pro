@@ -2,7 +2,6 @@ fastapi
 uvicorn[standard]
 google-genai
 python-multipart
-
 resend
 email-validator
-supabase
+supabase==2.28.0
