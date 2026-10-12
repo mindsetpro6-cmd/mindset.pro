@@ -1,8 +1,7 @@
 fastapi
-uvicorn
-requests
-python-dotenv
-resend
-
+uvicorn[standard]
 google-genai
+python-multipart
+resend
 email-validator
+supabase
