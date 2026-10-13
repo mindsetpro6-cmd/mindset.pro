@@ -651,3 +651,50 @@ def chat(request: ChatRequest):
             status_code=500,
             detail="Erro ao processar a mensagem."
         )
+
+# ============================================================
+# INTEGRACAO SUPABASE - BIBLIOTECA A ARCA DO SABER
+# ============================================================
+
+@app.get('/biblioteca/estado')
+def estado_biblioteca():
+    from supabase import create_client
+
+    url = os.getenv('SUPABASE_URL')
+    chave = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
+
+    if not url or not chave:
+        raise HTTPException(
+            status_code=503,
+            detail='Configuracao do Supabase incompleta no servidor.'
+        )
+
+    tabelas = [
+        'biblioteca_jornal',
+        'biblioteca_livros',
+        'biblioteca_materiais',
+        'biblioteca_videos',
+    ]
+
+    try:
+        cliente = create_client(url, chave)
+        resultado = {}
+
+        for tabela in tabelas:
+            try:
+                cliente.table(tabela).select('*').limit(1).execute()
+                resultado[tabela] = 'acessivel'
+            except Exception:
+                resultado[tabela] = 'erro_de_acesso'
+
+        return {
+            'status': 'online',
+            'servico': 'MINDSET PRO - Biblioteca',
+            'tabelas': resultado
+        }
+
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail='Nao foi possivel estabelecer ligacao ao Supabase.'
+        )

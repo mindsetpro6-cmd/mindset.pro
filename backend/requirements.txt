@@ -5,3 +5,5 @@ python-multipart
 
 resend
 email-validator
+
+supabase
